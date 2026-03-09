@@ -89,13 +89,20 @@ export default function App() {
 
     try {
       const canvas = document.createElement('canvas');
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      const boxAspect = 280 / 160;
+      const cropW = Math.min(vw * 0.5, vh * boxAspect);
+      const cropH = cropW / boxAspect;
+      const sx = (vw - cropW) / 2;
+      const sy = (vh - cropH) / 2;
       const maxWidth = 800;
-      const scale = video.videoWidth > maxWidth ? maxWidth / video.videoWidth : 1;
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
+      const scale = cropW > maxWidth ? maxWidth / cropW : 1;
+      canvas.width = Math.round(cropW * scale);
+      canvas.height = Math.round(cropH * scale);
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Could not get canvas context');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, canvas.width, canvas.height);
 
       const worker = workerRef.current ?? (await workerPromiseRef.current!);
       const { data } = await worker.recognize(canvas);
