@@ -1,28 +1,73 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createWorker, type Worker } from 'tesseract.js';
+import { createWorker, type Worker, PSM } from 'tesseract.js';
 import './App.css';
+
+/**
+ * Preprocess canvas for better OCR: grayscale + contrast stretch.
+ * Helps with different fonts, lighting, and low-contrast text.
+ */
+function preprocessForOCR(source: HTMLCanvasElement): HTMLCanvasElement {
+  const { width, height } = source;
+  const out = document.createElement('canvas');
+  out.width = width;
+  out.height = height;
+  const ctx = out.getContext('2d');
+  const srcCtx = source.getContext('2d');
+  if (!ctx || !srcCtx) return source;
+
+  const srcData = srcCtx.getImageData(0, 0, width, height);
+  const data = srcData.data;
+  const gray: number[] = [];
+  let min = 255;
+  let max = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const g = Math.round(0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!);
+    gray.push(g);
+    if (g < min) min = g;
+    if (g > max) max = g;
+  }
+
+  const range = Math.max(max - min, 1);
+  const outData = ctx.createImageData(width, height);
+  for (let i = 0; i < gray.length; i++) {
+    const v = Math.round(((gray[i]! - min) / range) * 255);
+    outData.data[i * 4] = v;
+    outData.data[i * 4 + 1] = v;
+    outData.data[i * 4 + 2] = v;
+    outData.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(outData, 0, 0);
+  return out;
+}
+
+let tapAudioCtx: AudioContext | null = null;
 
 function playTapFeedback() {
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
     navigator.vibrate(10);
   }
   try {
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!Ctx) return;
-    const ctx = new Ctx();
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
+    if (!tapAudioCtx) {
+      tapAudioCtx = new Ctx();
     }
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
+    if (tapAudioCtx.state === 'suspended') {
+      tapAudioCtx.resume().catch(() => {});
+    }
+    const osc = tapAudioCtx.createOscillator();
+    const gain = tapAudioCtx.createGain();
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(tapAudioCtx.destination);
     osc.frequency.value = 880;
     osc.type = 'sine';
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.15, tapAudioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, tapAudioCtx.currentTime + 0.08);
+    osc.start(tapAudioCtx.currentTime);
+    osc.stop(tapAudioCtx.currentTime + 0.08);
   } catch {
     // ignore
   }
@@ -44,6 +89,7 @@ export default function App() {
     if (workerPromiseRef.current) return;
     workerPromiseRef.current = (async () => {
       const worker = await createWorker('eng', 1, { logger: () => {} });
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
       workerRef.current = worker;
       return worker;
     })();
@@ -104,24 +150,38 @@ export default function App() {
       if (!ctx) throw new Error('Could not get canvas context');
       ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, canvas.width, canvas.height);
 
+      const preprocessed = preprocessForOCR(canvas);
       const worker = workerRef.current ?? (await workerPromiseRef.current!);
-      const { data } = await worker.recognize(canvas);
-      const trimmed = (data?.text || '').trim();
-      if (!trimmed) {
+      const { data } = await worker.recognize(preprocessed);
+
+      const anyData = data as any;
+      const avgConfidence: number = typeof anyData?.confidence === 'number' ? anyData.confidence : 0;
+      const words: any[] = Array.isArray(anyData?.words) ? anyData.words : [];
+      const strongWords = words
+        .filter((w) => typeof w.text === 'string' && w.text.trim() && (w.confidence ?? 0) >= 70)
+        .map((w) => w.text as string);
+
+      const rawText = (data?.text || '').replace(/\s+/g, ' ').trim();
+      const joinedStrong = strongWords.join(' ').replace(/\s+/g, ' ').trim();
+      const bestText = joinedStrong.length >= 3 ? joinedStrong : rawText;
+
+      if (!bestText || bestText.length < 3 || avgConfidence < 50) {
         setLastText('');
-        alert('No text found. Point the camera at printed or written text and try again.');
+        alert(
+          'No clear text found. Try moving closer, centering the text in the box, or improving the lighting.'
+        );
         setIsProcessing(false);
         return;
       }
 
-      setLastText(trimmed);
+      setLastText(bestText);
       setIsSpeaking(true);
 
       window.speechSynthesis.cancel();
       if (typeof window.speechSynthesis.resume === 'function') {
         window.speechSynthesis.resume();
       }
-      const utterance = new SpeechSynthesisUtterance(trimmed);
+      const utterance = new SpeechSynthesisUtterance(bestText);
       utterance.lang = 'en';
       utterance.volume = 1;
       utterance.rate = 1;
