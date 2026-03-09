@@ -78,6 +78,7 @@ export default function App() {
   const streamRef = useRef<MediaStream | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const workerPromiseRef = useRef<Promise<Worker> | null>(null);
+  const [snapshot, setSnapshot] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastText, setLastText] = useState<string | null>(null);
@@ -130,6 +131,7 @@ export default function App() {
     if (!video || !streamRef.current || isProcessing) return;
 
     playTapFeedback();
+    setSnapshot(null);
     setIsProcessing(true);
     setLastText(null);
 
@@ -149,6 +151,16 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Could not get canvas context');
       ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, canvas.width, canvas.height);
+
+      // Freeze-frame behaviour: show a still image of the captured area while processing.
+      try {
+        setSnapshot(canvas.toDataURL('image/png'));
+        if (!video.paused) {
+          await video.pause();
+        }
+      } catch {
+        // ignore pause/snapshot errors
+      }
 
       const preprocessed = preprocessForOCR(canvas);
       const worker = workerRef.current ?? (await workerPromiseRef.current!);
@@ -192,6 +204,14 @@ export default function App() {
       const msg = e instanceof Error ? e.message : 'Something went wrong';
       setError(msg);
     } finally {
+      if (videoRef.current && videoRef.current.paused) {
+        videoRef.current
+          .play()
+          .catch(() => {
+            // ignore play errors
+          });
+      }
+      setSnapshot(null);
       setIsProcessing(false);
     }
   }, [isProcessing]);
@@ -233,7 +253,16 @@ export default function App() {
   return (
     <div className="app">
       <div className="cameraWrap">
-        <video ref={videoRef} className="video" playsInline muted />
+        {snapshot && (
+          <img src={snapshot} alt="" className="snapshot" />
+        )}
+        <video
+          ref={videoRef}
+          className="video"
+          playsInline
+          muted
+          style={snapshot ? { visibility: 'hidden' } : undefined}
+        />
         <div className="overlay">
           <div className="focusFrame" />
           <p className="hint">Point at text, then tap Read aloud</p>
