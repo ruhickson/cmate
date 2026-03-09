@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createWorker, Worker } from 'tesseract.js';
+import { createWorker, type Worker } from 'tesseract.js';
 import './App.css';
 
 function playTapFeedback() {
