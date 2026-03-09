@@ -46,7 +46,6 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transform: scaleX(-1);
 }
 
 .overlay {
@@ -87,6 +86,21 @@
   padding: 0.75rem 1rem;
   background: rgba(255, 255, 255, 0.08);
   border-radius: 10px;
+}
+
+.playAgain {
+  margin-top: 0.5rem;
+  padding: 0.35rem 0;
+  background: none;
+  border: none;
+  color: #0a84ff;
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.playAgain:hover {
+  text-decoration: underline;
 }
 
 .previewText {
